@@ -31,9 +31,10 @@ class TransferRequest(BaseModel):
 @app.post("/login")
 async def login_user(request: LoginRequest):
     """
-    Authenticate a user by checking mobile_number and mpin.
+    Authenticate a user by checking mobile_number and mpin, return all contacts, and recently used contacts.
     """
     try:
+        # Check if the user exists and the MPIN matches
         response = supabase.table("users").select("*").eq("mobile_number", request.mobile_number).execute()
         if not response.data:
             raise HTTPException(status_code=404, detail="User not found")
@@ -42,13 +43,37 @@ async def login_user(request: LoginRequest):
         if user["mpin"] != request.mpin:
             raise HTTPException(status_code=401, detail="Invalid MPIN")
         
+        # Fetch all contacts from the 'users' table except the user's own number
+        contacts_response = supabase.table("users").select("mobile_number, name").execute()
+        all_contacts = [
+            contact for contact in contacts_response.data 
+            if contact["mobile_number"] != request.mobile_number
+        ]
+        
+        # Fetch recent transactions from the user's transaction table
+        transaction_table_name = f"transactions_{request.mobile_number}"
+        transactions_response = supabase.table(transaction_table_name).select("transaction_with").execute()
+        
+        if transactions_response.data:
+            # Extract unique recently used contacts from transactions
+            recent_contacts_numbers = {t["transaction_with"] for t in transactions_response.data}  # Using set to avoid duplicates
+            recent_contacts = [
+                contact for contact in contacts_response.data 
+                if contact["mobile_number"] in recent_contacts_numbers
+            ]
+        else:
+            # If no transactions exist, there are no recent contacts
+            recent_contacts = []
+
         return {
             "message": "Login successful",
             "user": {
                 "mobile_number": user["mobile_number"],
                 "name": user["name"],
                 "wallet_amount": user["wallet_amount"]
-            }
+            },
+            "contacts": all_contacts,
+            "recent_contacts": recent_contacts
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
