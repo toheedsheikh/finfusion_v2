@@ -232,6 +232,7 @@ async def get_user_portfolio(request: PortfolioRequest):
         for stock in portfolio_response.data:
             portfolio_data.append({
                 "Symbol": stock["stock_symbol"],
+                "Name": stock["company_name"],
                 "Total Price": stock["total_investment"],  # Total investment
                 "Price Per Share": stock["purchase_price"],  # Purchase price per share
                 "Number of Shares": stock["quantity"],  # Quantity of shares
@@ -261,6 +262,37 @@ async def get_user_portfolio(request: PortfolioRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/explore")
+async def explore_companies():
+    """
+    Retrieve company data categorized by category for the Explore page using Supabase.
+    """
+    try:
+        # Fetch all data from the explore_companies table
+        response = supabase.table("explore_companies").select("*").execute()
+
+        # Check if data exists
+        if response.data is None or len(response.data) == 0:
+            return {"message": "No data found in explore_companies table", "categories": {}}
+
+        # Organize data by category
+        explore_data = response.data
+        categorized_data = {}
+        for company in explore_data:
+            category = company["category"]
+            if category not in categorized_data:
+                categorized_data[category] = []
+            categorized_data[category].append({
+                "company_name": company["company_name"],
+                "ticker_symbol": company["ticker_symbol"],
+                "price_note": company["price_note"],
+                "information": company["information"]
+            })
+
+        return {"message": "Data retrieved successfully", "categories": categorized_data}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving explore data: {str(e)}")
 
 @app.get("/")
 async def root():
