@@ -11,6 +11,8 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 app = FastAPI()
 
 # Pydantic models
+class PortfolioRequest(BaseModel):
+    mobile_number: str
 
 class SignUpRequest(BaseModel):
     mobile_number: str
@@ -211,14 +213,14 @@ async def transfer_funds(request: TransferRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@app.get("/portfolio/{mobile_number}")
-async def get_user_portfolio(mobile_number: str):
+@app.post("/portfolio")
+async def get_user_portfolio(request: PortfolioRequest):
     """
     Retrieve the portfolio details of a user in the specified format.
     """
     try:
         # Define the portfolio table name dynamically
-        portfolio_table = f"portfolio_{mobile_number}"
+        portfolio_table = f"portfolio_{request.mobile_number}"
 
         # Fetch the portfolio data
         portfolio_response = supabase.table(portfolio_table).select("*").execute()
