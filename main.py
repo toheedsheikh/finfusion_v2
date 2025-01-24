@@ -289,7 +289,7 @@ async def explore_companies():
                 "information": company["Info"]
             })
 
-        return {"message": "Data retrieved successfully", "categories": categorized_data}
+        return {"keys":["Technology","Entertainment","Hardware","Healthcare","Finance","Energy"],"message": "Data retrieved successfully", "categories": categorized_data}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving explore data: {str(e)}")
