@@ -11,6 +11,14 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 app = FastAPI()
 
 # Pydantic models
+
+class SignUpRequest(BaseModel):
+    mobile_number: str
+    name: str
+    email: str
+    password: str
+    mpin: str
+
 class Transaction(BaseModel):
     amount: float
     transaction_with: str
@@ -27,7 +35,53 @@ class TransferRequest(BaseModel):
     category: Optional[str] = None
 
 
-# Endpoint 1: Login authentication
+@app.post("/signup")
+async def sign_up_user(request: SignUpRequest):
+    try:
+        # Check if the mobile number already exists
+        existing_user_response = supabase.table("users").select("*").eq("mobile_number", request.mobile_number).execute()
+        if existing_user_response.data:
+            raise HTTPException(status_code=400, detail="Mobile number already exists")
+
+        # Hash the password before saving
+        hashed_password = hash_password(request.password)
+
+        # Prepare transaction table name and portfolio table name
+        transaction_table_name = f"transactions_{request.mobile_number}"
+        portfolio_table_name = f"portfolio_{request.mobile_number}"
+
+        # Prepare new user data
+        new_user = {
+            "mobile_number": request.mobile_number,
+            "name": request.name,
+            "email": request.email,
+            "password_hash": hashed_password,
+            "mpin": request.mpin,
+            "wallet_amount": 0.00,
+            "transaction_table_name": transaction_table_name
+        }
+
+        # Add the new user to the 'users' table
+        supabase.table("users").insert(new_user).execute()
+
+        # Dynamically create a transaction table for this user
+        supabase.rpc("create_transaction_table", {"table_name": transaction_table_name}).execute()
+
+        # Dynamically create a portfolio table for this user
+        supabase.rpc("create_portfolio_table", {"table_name": portfolio_table_name}).execute()
+
+        return {"message": "User created successfully", "user": new_user}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def hash_password(password: str) -> str:
+    """Hash the password using SHA-256."""
+    import hashlib
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
 @app.post("/login")
 async def login_user(request: LoginRequest):
     """
@@ -77,9 +131,37 @@ async def login_user(request: LoginRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/deposit")
+async def deposit_money(mobile_number: str, amount: float, mpin: str):
+    """
+    Allows a user to deposit money into their wallet after verifying their MPIN.
+    """
+    try:
+        # Fetch the user by mobile number
+        response = supabase.table("users").select("*").eq("mobile_number", mobile_number).execute()
 
+        if not response.data:
+            raise HTTPException(status_code=404, detail="User not found")
 
-# Endpoint 2: Payment transfer
+        user = response.data[0]
+
+        # Verify the user's MPIN
+        if user["mpin"] != mpin:
+            raise HTTPException(status_code=401, detail="Invalid MPIN")
+
+        # Update the wallet balance
+        updated_balance = user["wallet_amount"] + amount
+        supabase.table("users").update({"wallet_amount": updated_balance}).eq("mobile_number", mobile_number).execute()
+
+        return {
+            "message": "Deposit successful",
+            "mobile_number": mobile_number,
+            "new_wallet_balance": updated_balance
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/transfer")
 async def transfer_funds(request: TransferRequest):
     """
@@ -128,8 +210,56 @@ async def transfer_funds(request: TransferRequest):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/portfolio/{mobile_number}")
+async def get_user_portfolio(mobile_number: str):
+    """
+    Retrieve the portfolio details of a user in the specified format.
+    """
+    try:
+        # Define the portfolio table name dynamically
+        portfolio_table = f"portfolio_{mobile_number}"
+
+        # Fetch the portfolio data
+        portfolio_response = supabase.table(portfolio_table).select("*").execute()
+        if not portfolio_response.data:
+            return {"message": "Portfolio is empty", "portfolio": []}
+
+        # Transform data into the required format
+        portfolio_data = []
+        for stock in portfolio_response.data:
+            portfolio_data.append({
+                "Symbol": stock["stock_symbol"],
+                "Total Price": stock["total_investment"],  # Total investment
+                "Price Per Share": stock["purchase_price"],  # Purchase price per share
+                "Number of Shares": stock["quantity"],  # Quantity of shares
+                "Market Sentiment": "Positive" if stock["profit_loss"] >= 0 else "Negative",  # Dummy logic
+                "Text Info": f"{stock['stock_symbol']} is a leading company in its sector.",  # Dummy description
+                "Last Refreshed": "2025-01-24T10:00:00Z",  # Dummy timestamp
+                "Time Zone": "EST",  # Dummy time zone
+                "ShowMore": {
+                    "Graph": {
+                        "Daily": [
+                            {"Time": "2025-01-23T10:00:00Z", "Price": stock["current_price"] - 2},
+                            {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
+                        ],
+                        "Weekly": [
+                            {"Time": "2025-01-17T10:00:00Z", "Price": stock["current_price"] - 5},
+                            {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
+                        ],
+                        "Monthly": [
+                            {"Time": "2024-12-24T10:00:00Z", "Price": stock["current_price"] - 10},
+                            {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
+                        ],
+                    },
+                },
+            })
+
+        return {"message": "Portfolio retrieved successfully", "portfolio": portfolio_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to the Transaction API. Use /login and /transfer for operations."}
+    return {"message": "Welcome to the Transaction API. Use /signup, /login, and /transfer for operations."}
