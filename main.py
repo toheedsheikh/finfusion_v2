@@ -285,7 +285,7 @@ async def explore_companies():
             categorized_data[category].append({
                 "company_name": company["Company Name"],
                 "ticker_symbol": company["Ticker Symbol"],
-                "price_note": company["Price Note"],
+                "price_note": company["Price"],
                 "information": company["Info"]
             })
 
