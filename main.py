@@ -269,7 +269,7 @@ async def explore_companies():
     """
     try:
         # Fetch all data from the explore_companies table
-        response = supabase.table("explore_companies").select("*").execute()
+        response = supabase.table("companies").select("*").execute()
 
         # Check if data exists
         if response.data is None or len(response.data) == 0:
@@ -279,14 +279,14 @@ async def explore_companies():
         explore_data = response.data
         categorized_data = {}
         for company in explore_data:
-            category = company["category"]
+            category = company["Category"]
             if category not in categorized_data:
                 categorized_data[category] = []
             categorized_data[category].append({
-                "company_name": company["company_name"],
-                "ticker_symbol": company["ticker_symbol"],
-                "price_note": company["price_note"],
-                "information": company["information"]
+                "company_name": company["Company Name"],
+                "ticker_symbol": company["Ticker Symbol"],
+                "price_note": company["Price Note"],
+                "information": company["Info"]
             })
 
         return {"message": "Data retrieved successfully", "categories": categorized_data}
