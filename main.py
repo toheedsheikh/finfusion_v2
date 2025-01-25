@@ -72,37 +72,58 @@ async def update_user_portfolio_summary(mobile_number: str):
         "profit_loss": profit_loss
     }).eq("mobile_number", mobile_number).execute()
 
-@app.get("/financial-summary")
-def get_financial_summary():
-    data = {
-        "breakdown_of_cost": [
-            {"category": "Entertainment", "amount": 1500},
-            {"category": "Rent", "amount": 8000},
-            {"category": "Groceries", "amount": 3000},
-            {"category": "Utilities", "amount": 2500},
-            {"category": "Transportation", "amount": 2000},
-            {"category": "Others", "amount": 1000}
-        ],
-        "net_worth_value": [
-            {"asset": "Bank Balance", "value": 50000},
-            {"asset": "Shares", "value": 20000}
-        ],
-        "portfolio_breakdown": [
-            {"share": "Apple", "value": 5000},
-            {"share": "Tesla", "value": 3000},
-            {"share": "Amazon", "value": 8000},
-            {"share": "Microsoft", "value": 6000},
-            {"share": "Google", "value": 4000}
-        ],
-        "performance_metrics": [
-            {"stock": "Apple", "investment_price": 150, "current_price": 180},
-            {"stock": "Tesla", "investment_price": 200, "current_price": 220},
-            {"stock": "Amazon", "investment_price": 120, "current_price": 100},
-            {"stock": "Microsoft", "investment_price": 250, "current_price": 300},
-            {"stock": "Google", "investment_price": 180, "current_price": 170}
-        ]
-    }
-    return data
+@app.post("/financial-summary")
+def get_financial_summary(mobile_number: str):
+    try:
+        # Fetch user data
+        user_response = supabase.table("users").select("wallet_amount, current_portfolio_value").eq("mobile_number", mobile_number).execute()
+        if not user_response.data:
+            raise HTTPException(status_code=404, detail="User not found")
+        user_data = user_response.data[0]
+
+        # Fetch all transactions and aggregate them by category
+        transaction_table = f"transactions_{mobile_number}"
+        transactions_response = supabase.table(transaction_table).select("category, amount").execute()
+        if transactions_response.data:
+            transaction_breakdown = {}
+            for transaction in transactions_response.data:
+                category = transaction["category"]
+                amount = transaction["amount"]
+                transaction_breakdown[category] = transaction_breakdown.get(category, 0) + amount
+            transaction_breakdown = [{"category": k, "amount": v} for k, v in transaction_breakdown.items()]
+        else:
+            transaction_breakdown = []
+
+        # Fetch portfolio breakdown
+        portfolio_table = f"portfolio_{mobile_number}"
+        portfolio_response = supabase.table(portfolio_table).select("stock_symbol, current_value").execute()
+        portfolio_breakdown = [{"share": p["stock_symbol"], "value": p["current_value"]} for p in portfolio_response.data] if portfolio_response.data else []
+
+        # Fetch performance metrics
+        performance_response = supabase.table(portfolio_table).select("stock_symbol, purchase_price, current_price").execute()
+        performance_metrics = [
+            {
+                "stock": p["stock_symbol"],
+                "investment_price": p["purchase_price"],
+                "current_price": p["current_price"]
+            }
+            for p in performance_response.data
+        ] if performance_response.data else []
+
+        # Build the response
+        data = {
+            "breakdown_of_cost": transaction_breakdown,
+            "net_worth_value": [
+                {"asset": "Bank Balance", "value": user_data["wallet_amount"]},
+                {"asset": "Shares", "value": user_data["current_portfolio_value"]}
+            ],
+            "portfolio_breakdown": portfolio_breakdown,
+            "performance_metrics": performance_metrics
+        }
+        return data
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
