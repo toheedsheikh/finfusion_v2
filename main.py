@@ -361,6 +361,36 @@ async def get_user_portfolio(request: PortfolioRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
+@app.post("/transaction-history")
+async def get_transaction_history(request: TransactionHistoryRequest):
+    """
+    Retrieve the transaction history for a user based on their mobile number.
+    """
+    try:
+        # Define the transaction table name dynamically
+        transaction_table = f"transactions_{request.mobile_number}"
+
+        # Fetch all transactions for the user
+        transaction_response = supabase.table(transaction_table).select("*").execute()
+        if not transaction_response.data:
+            return {"message": "No transactions found", "transactions": []}
+
+        # Process and return the data
+        transactions = [
+            {
+                "transaction_id": txn.get("transaction_id", "N/A"),  # Updated field name
+                "date": txn.get("transaction_date", "N/A"),
+                "amount": txn.get("amount", 0.0),
+                "category": txn.get("category", "Unknown"),
+                "description": txn.get("description", "N/A"),  # Optional field
+                "type": txn.get("type", "Unknown"),  # e.g., debit or credit
+            }
+            for txn in transaction_response.data
+        ]
+        return {"message": "Transaction history retrieved successfully", "transactions": transactions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/portfolio")
 async def get_user_portfolio(request: PortfolioRequest):
     """
