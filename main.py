@@ -29,7 +29,7 @@ class PerformanceMetrics(BaseModel):
     investment_price: float
     current_price: float
 
-class PortfolioRequest(BaseModel):
+class FinancialSummaryRequest(BaseModel):
     mobile_number: str
 
 class SignUpRequest(BaseModel):
@@ -73,8 +73,10 @@ async def update_user_portfolio_summary(mobile_number: str):
     }).eq("mobile_number", mobile_number).execute()
 
 @app.post("/financial-summary")
-def get_financial_summary(mobile_number: str):
+def get_financial_summary(request: FinancialSummaryRequest):
     try:
+        mobile_number = request.mobile_number
+
         # Fetch user data
         user_response = supabase.table("users").select("wallet_amount, current_portfolio_value").eq("mobile_number", mobile_number).execute()
         if not user_response.data:
@@ -124,8 +126,6 @@ def get_financial_summary(mobile_number: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
 
 @app.post("/signup")
 async def sign_up_user(request: SignUpRequest):
