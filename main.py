@@ -12,6 +12,10 @@ app = FastAPI()
 
 # Pydantic models
 
+# Request model for transaction history
+class TransactionHistoryRequest(BaseModel):
+    mobile_number: str
+
 class CostBreakdown(BaseModel):
     category: str
     amount: int
@@ -305,6 +309,55 @@ async def transfer_funds(request: TransferRequest):
 
         return {"message": "Transaction successful", "sender_balance": sender["wallet_amount"] - request.amount}
     
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/portfolio")
+async def get_user_portfolio(request: PortfolioRequest):
+    """
+    Retrieve the portfolio details of a user in the specified format.
+    """
+    try:
+        # Define the portfolio table name dynamically
+        portfolio_table = f"portfolio_{request.mobile_number}"
+
+        # Fetch the portfolio data
+        portfolio_response = supabase.table(portfolio_table).select("*").execute()
+        if not portfolio_response.data:
+            return {"message": "Portfolio is empty", "portfolio": []}
+
+        # Transform data into the required format
+        portfolio_data = []
+        for stock in portfolio_response.data:
+            portfolio_data.append({
+                "Symbol": stock["stock_symbol"],
+                "Name": stock["company_name"],
+                "Total Price": stock["total_investment"],  # Total investment
+                "Price Per Share": stock["purchase_price"],  # Purchase price per share
+                "Number of Shares": stock["quantity"],  # Quantity of shares
+                "Market Sentiment": "Positive" if stock["profit_loss"] >= 0 else "Negative",  # Dummy logic
+                "Text Info": f"{stock['stock_symbol']} is a leading company in its sector.",  # Dummy description
+                "Last Refreshed": "2025-01-24T10:00:00Z",  # Dummy timestamp
+                "Time Zone": "EST",  # Dummy time zone
+                "ShowMore": {
+                    "Graph": {
+                        "Daily": [
+                            {"Time": "2025-01-23T10:00:00Z", "Price": stock["current_price"] - 2},
+                            {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
+                        ],
+                        "Weekly": [
+                            {"Time": "2025-01-17T10:00:00Z", "Price": stock["current_price"] - 5},
+                            {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
+                        ],
+                        "Monthly": [
+                            {"Time": "2024-12-24T10:00:00Z", "Price": stock["current_price"] - 10},
+                            {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
+                        ],
+                    },
+                },
+            })
+
+        return {"message": "Portfolio retrieved successfully", "portfolio": portfolio_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
