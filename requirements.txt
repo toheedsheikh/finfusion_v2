@@ -1,2 +1,4 @@
 fastapi[all]
 supabase
+requests
+random
