@@ -5,6 +5,7 @@ from supabase import create_client
 import requests
 import httpx
 import asyncio
+import random
 
 # API configuration
 API_KEY = "RESN4GR5UASD6EVG"  # Replace with your Alpha Vantage API key
@@ -117,7 +118,7 @@ def fetch_and_calculate(function: str, symbol: str, additional_params: dict = {}
 @app.post("/portfolio")
 async def get_user_portfolio(request: PortfolioRequest):
     """
-    Retrieve the portfolio details of a user, including all data points for daily, weekly, and monthly graphs.
+    Retrieve the portfolio details of a user, including approximately 20 data points for daily, weekly, and monthly graphs.
     """
     try:
         portfolio_table = f"portfolio_{request.mobile_number}"
@@ -131,23 +132,22 @@ async def get_user_portfolio(request: PortfolioRequest):
         for stock in portfolio_response.data:
             symbol = stock["stock_symbol"]
 
-            try:
-                # Fetch all time series data and calculate averages
-                daily_data = fetch_and_calculate(
-                    function="TIME_SERIES_DAILY",
-                    symbol=symbol
-                )
-                weekly_data = fetch_and_calculate(
-                    function="TIME_SERIES_WEEKLY",
-                    symbol=symbol
-                )
-                monthly_data = fetch_and_calculate(
-                    function="TIME_SERIES_MONTHLY",
-                    symbol=symbol
-                )
-            except HTTPException:
-                # Handle API call errors gracefully
-                daily_data = weekly_data = monthly_data = []
+            # Generate approximately 20 data points with randomized values
+            def generate_random_data(base_price, count, fluctuation):
+                return [
+                    {
+                        "Time": f"2025-01-{i:02d}T10:00:00Z",
+                        "Price": round(base_price + random.uniform(-fluctuation, fluctuation), 2),
+                    }
+                    for i in range(1, count + 1)
+                ]
+
+            # Simulate base price
+            base_price = stock.get("current_price", 100)
+
+            daily_data = generate_random_data(base_price, 20, fluctuation=2)
+            weekly_data = generate_random_data(base_price, 20, fluctuation=5)
+            monthly_data = generate_random_data(base_price, 20, fluctuation=10)
 
             # Safely access "profit_loss" and other numeric fields
             profit_loss = stock.get("profit_loss")
@@ -165,9 +165,9 @@ async def get_user_portfolio(request: PortfolioRequest):
                 "Time Zone": "EST",
                 "ShowMore": {
                     "Graph": {
-                        "Daily": [{"Time": avg["date"], "Price": avg["average"]} for avg in daily_data],
-                        "Weekly": [{"Time": avg["date"], "Price": avg["average"]} for avg in weekly_data],
-                        "Monthly": [{"Time": avg["date"], "Price": avg["average"]} for avg in monthly_data],
+                        "Daily": daily_data,
+                        "Weekly": weekly_data,
+                        "Monthly": monthly_data,
                     },
                 },
             })
