@@ -5,7 +5,6 @@ from supabase import create_client
 import requests
 import httpx
 import asyncio
-import random
 
 # API configuration
 API_KEY = "RESN4GR5UASD6EVG"  # Replace with your Alpha Vantage API key
@@ -17,23 +16,6 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI()
-
-# Define Pydantic models for input validation
-class BuyStockRequest(BaseModel):
-    mobile_number: str
-    stock_symbol: str
-    company_name: str
-    quantity: int
-    price_per_share: float
-
-class SellStockRequest(BaseModel):
-    mobile_number: str
-    stock_symbol: str
-    company_name: str
-    quantity: int
-    price_per_share: float
-
-    
 
 # Pydantic models
 class PortfolioRequest(BaseModel):
@@ -132,66 +114,67 @@ def fetch_and_calculate(function: str, symbol: str, additional_params: dict = {}
     else:
         raise HTTPException(status_code=response.status_code, detail="Failed to fetch data.")
 
-# @app.post("/portfolio")
-# async def get_user_portfolio(request: PortfolioRequest):
-#     """
-#     Retrieve the portfolio details of a user, including approximately 20 data points for daily, weekly, and monthly graphs.
-#     """
-#     try:
-#         portfolio_table = f"portfolio_{request.mobile_number}"
+@app.post("/portfolio")
+async def get_user_portfolio(request: PortfolioRequest):
+    """
+    Retrieve the portfolio details of a user, including all data points for daily, weekly, and monthly graphs.
+    """
+    try:
+        portfolio_table = f"portfolio_{request.mobile_number}"
 
-#         # Fetch the portfolio data
-#         portfolio_response = supabase.table(portfolio_table).select("*").execute()
-#         if not portfolio_response.data:
-#             return {"message": "Portfolio is empty", "portfolio": []}
+        # Fetch the portfolio data
+        portfolio_response = supabase.table(portfolio_table).select("*").execute()
+        if not portfolio_response.data:
+            return {"message": "Portfolio is empty", "portfolio": []}
 
-#         portfolio_data = []
-#         for stock in portfolio_response.data:
-#             symbol = stock["stock_symbol"]
+        portfolio_data = []
+        for stock in portfolio_response.data:
+            symbol = stock["stock_symbol"]
 
-#             # Generate approximately 20 data points with randomized values
-#             def generate_random_data(base_price, count, fluctuation):
-#                 return [
-#                     {
-#                         "Time": f"2025-01-{i:02d}T10:00:00Z",
-#                         "Price": round(base_price + random.uniform(-fluctuation, fluctuation), 2),
-#                     }
-#                     for i in range(1, count + 1)
-#                 ]
+            try:
+                # Fetch all time series data and calculate averages
+                daily_data = fetch_and_calculate(
+                    function="TIME_SERIES_DAILY",
+                    symbol=symbol
+                )
+                weekly_data = fetch_and_calculate(
+                    function="TIME_SERIES_WEEKLY",
+                    symbol=symbol
+                )
+                monthly_data = fetch_and_calculate(
+                    function="TIME_SERIES_MONTHLY",
+                    symbol=symbol
+                )
+            except HTTPException:
+                # Handle API call errors gracefully
+                daily_data = weekly_data = monthly_data = []
 
-#             # Simulate base price
-#             base_price = stock.get("current_price", 100)
+            # Safely access "profit_loss" and other numeric fields
+            profit_loss = stock.get("profit_loss")
+            profit_loss = profit_loss if profit_loss is not None else 0  # Default to 0 if None
 
-#             daily_data = generate_random_data(base_price, 20, fluctuation=2)
-#             weekly_data = generate_random_data(base_price, 20, fluctuation=5)
-#             monthly_data = generate_random_data(base_price, 20, fluctuation=10)
+            portfolio_data.append({
+                "Symbol": stock["stock_symbol"],
+                "Name": stock["company_name"],
+                "Total Price": stock["total_investment"] or 0,  # Default to 0 if None
+                "Price Per Share": stock["purchase_price"] or 0,  # Default to 0 if None
+                "Number of Shares": stock["quantity"] or 0,  # Default to 0 if None
+                "Market Sentiment": "Positive" if profit_loss >= 0 else "Negative",
+                "Text Info": f"{stock['stock_symbol']} is a leading company in its sector.",
+                "Last Refreshed": "2025-01-24T10:00:00Z",
+                "Time Zone": "EST",
+                "ShowMore": {
+                    "Graph": {
+                        "Daily": [{"Time": avg["date"], "Price": avg["average"]} for avg in daily_data],
+                        "Weekly": [{"Time": avg["date"], "Price": avg["average"]} for avg in weekly_data],
+                        "Monthly": [{"Time": avg["date"], "Price": avg["average"]} for avg in monthly_data],
+                    },
+                },
+            })
 
-#             # Safely access "profit_loss" and other numeric fields
-#             profit_loss = stock.get("profit_loss")
-#             profit_loss = profit_loss if profit_loss is not None else 0  # Default to 0 if None
-
-#             portfolio_data.append({
-#                 "Symbol": stock["stock_symbol"],
-#                 "Name": stock["company_name"],
-#                 "Total Price": stock["total_investment"] or 0,  # Default to 0 if None
-#                 "Price Per Share": stock["purchase_price"] or 0,  # Default to 0 if None
-#                 "Number of Shares": stock["quantity"] or 0,  # Default to 0 if None
-#                 "Market Sentiment": "Positive" if profit_loss >= 0 else "Negative",
-#                 "Text Info": f"{stock['stock_symbol']} is a leading company in its sector.",
-#                 "Last Refreshed": "2025-01-24T10:00:00Z",
-#                 "Time Zone": "EST",
-#                 "ShowMore": {
-#                     "Graph": {
-#                         "Daily": daily_data,
-#                         "Weekly": weekly_data,
-#                         "Monthly": monthly_data,
-#                     },
-#                 },
-#             })
-
-#         return {"message": "Portfolio retrieved successfully", "portfolio": portfolio_data}
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
+        return {"message": "Portfolio retrieved successfully", "portfolio": portfolio_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 async def update_user_portfolio_summary(mobile_number: str):
     # Calculate total investment
@@ -473,67 +456,54 @@ async def transfer_funds(request: TransferRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/portfolio")
-async def get_user_portfolio(request: PortfolioRequest):
-    """
-    Retrieve the portfolio details of a user, including all data points for daily, weekly, and monthly graphs.
-    """
-    try:
-        portfolio_table = f"portfolio_{request.mobile_number}"
+# @app.post("/portfolio")
+# async def get_user_portfolio(request: PortfolioRequest):
+#     """
+#     Retrieve the portfolio details of a user in the specified format.
+#     """
+#     try:
+#         # Define the portfolio table name dynamically
+#         portfolio_table = f"portfolio_{request.mobile_number}"
 
-        # Fetch the portfolio data
-        portfolio_response = supabase.table(portfolio_table).select("*").execute()
-        if not portfolio_response.data:
-            return {"message": "Portfolio is empty", "portfolio": []}
+#         # Fetch the portfolio data
+#         portfolio_response = supabase.table(portfolio_table).select("*").execute()
+#         if not portfolio_response.data:
+#             return {"message": "Portfolio is empty", "portfolio": []}
 
-        portfolio_data = []
-        for stock in portfolio_response.data:
-            symbol = stock["stock_symbol"]
+#         # Transform data into the required format
+#         portfolio_data = []
+#         for stock in portfolio_response.data:
+#             portfolio_data.append({
+#                 "Symbol": stock["stock_symbol"],
+#                 "Name": stock["company_name"],
+#                 "Total Price": stock["total_investment"],  # Total investment
+#                 "Price Per Share": stock["purchase_price"],  # Purchase price per share
+#                 "Number of Shares": stock["quantity"],  # Quantity of shares
+#                 "Market Sentiment": "Positive" if stock["profit_loss"] >= 0 else "Negative",  # Dummy logic
+#                 "Text Info": f"{stock['stock_symbol']} is a leading company in its sector.",  # Dummy description
+#                 "Last Refreshed": "2025-01-24T10:00:00Z",  # Dummy timestamp
+#                 "Time Zone": "EST",  # Dummy time zone
+#                 "ShowMore": {
+#                     "Graph": {
+#                         "Daily": [
+#                             {"Time": "2025-01-23T10:00:00Z", "Price": stock["current_price"] - 2},
+#                             {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
+#                         ],
+#                         "Weekly": [
+#                             {"Time": "2025-01-17T10:00:00Z", "Price": stock["current_price"] - 5},
+#                             {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
+#                         ],
+#                         "Monthly": [
+#                             {"Time": "2024-12-24T10:00:00Z", "Price": stock["current_price"] - 10},
+#                             {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
+#                         ],
+#                     },
+#                 },
+#             })
 
-            try:
-                # Fetch all time series data and calculate averages
-                daily_data = fetch_and_calculate(
-                    function="TIME_SERIES_DAILY",
-                    symbol=symbol
-                )
-                weekly_data = fetch_and_calculate(
-                    function="TIME_SERIES_WEEKLY",
-                    symbol=symbol
-                )
-                monthly_data = fetch_and_calculate(
-                    function="TIME_SERIES_MONTHLY",
-                    symbol=symbol
-                )
-            except HTTPException:
-                # Handle API call errors gracefully
-                daily_data = weekly_data = monthly_data = []
-
-            # Safely access "profit_loss" and other numeric fields
-            profit_loss = stock.get("profit_loss")
-            profit_loss = profit_loss if profit_loss is not None else 0  # Default to 0 if None
-
-            portfolio_data.append({
-                "Symbol": stock["stock_symbol"],
-                "Name": stock["company_name"],
-                "Total Price": stock["total_investment"] or 0,  # Default to 0 if None
-                "Price Per Share": stock["purchase_price"] or 0,  # Default to 0 if None
-                "Number of Shares": stock["quantity"] or 0,  # Default to 0 if None
-                "Market Sentiment": "Positive" if profit_loss >= 0 else "Negative",
-                "Text Info": f"{stock['stock_symbol']} is a leading company in its sector.",
-                "Last Refreshed": "2025-01-24T10:00:00Z",
-                "Time Zone": "EST",
-                "ShowMore": {
-                    "Graph": {
-                        "Daily": [{"Time": avg["date"], "Price": avg["average"]} for avg in daily_data],
-                        "Weekly": [{"Time": avg["date"], "Price": avg["average"]} for avg in weekly_data],
-                        "Monthly": [{"Time": avg["date"], "Price": avg["average"]} for avg in monthly_data],
-                    },
-                },
-            })
-
-        return {"message": "Portfolio retrieved successfully", "portfolio": portfolio_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+#         return {"message": "Portfolio retrieved successfully", "portfolio": portfolio_data}
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
     
 @app.get("/explore")
 async def explore_companies():
@@ -568,18 +538,11 @@ async def explore_companies():
         raise HTTPException(status_code=500, detail=f"Error retrieving explore data: {str(e)}")
     
 @app.post("/buy_stock")
-async def buy_stock(request: BuyStockRequest):
+async def buy_stock(mobile_number: str, stock_symbol: str, company_name: str, quantity: int, price_per_share: float):
     """
     Buy stocks and update the portfolio and transactions.
     """
     try:
-        # Extract data from the request object
-        mobile_number = request.mobile_number
-        stock_symbol = request.stock_symbol
-        company_name = request.company_name
-        quantity = request.quantity
-        price_per_share = request.price_per_share
-
         # Define the user's portfolio and transaction table names
         portfolio_table = f"portfolio_{mobile_number}"
         transaction_table = f"transactions_{mobile_number}"
@@ -638,20 +601,11 @@ async def buy_stock(request: BuyStockRequest):
 
 
 @app.post("/sell_stock")
-async def sell_stock(request: SellStockRequest):
+async def sell_stock(mobile_number: str, stock_symbol: str, company_name: str, quantity: int, price_per_share: float):
     """
     Sell stocks and update the portfolio and transactions.
     """
     try:
-        
-
-        # Extract data from the request object
-        mobile_number = request.mobile_number
-        stock_symbol = request.stock_symbol
-        company_name = request.company_name
-        quantity = request.quantity
-        price_per_share = request.price_per_share
-
         # Define the user's portfolio and transaction table names
         portfolio_table = f"portfolio_{mobile_number}"
         transaction_table = f"transactions_{mobile_number}"
