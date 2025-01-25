@@ -18,6 +18,23 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI()
 
+# Define Pydantic models for input validation
+class BuyStockRequest(BaseModel):
+    mobile_number: str
+    stock_symbol: str
+    company_name: str
+    quantity: int
+    price_per_share: float
+
+class SellStockRequest(BaseModel):
+    mobile_number: str
+    stock_symbol: str
+    company_name: str
+    quantity: int
+    price_per_share: float
+
+    
+
 # Pydantic models
 class PortfolioRequest(BaseModel):
     mobile_number: str
@@ -538,11 +555,18 @@ async def explore_companies():
         raise HTTPException(status_code=500, detail=f"Error retrieving explore data: {str(e)}")
     
 @app.post("/buy_stock")
-async def buy_stock(mobile_number: str, stock_symbol: str, company_name: str, quantity: int, price_per_share: float):
+async def buy_stock(request: BuyStockRequest):
     """
     Buy stocks and update the portfolio and transactions.
     """
     try:
+        # Extract data from the request object
+        mobile_number = request.mobile_number
+        stock_symbol = request.stock_symbol
+        company_name = request.company_name
+        quantity = request.quantity
+        price_per_share = request.price_per_share
+
         # Define the user's portfolio and transaction table names
         portfolio_table = f"portfolio_{mobile_number}"
         transaction_table = f"transactions_{mobile_number}"
@@ -601,11 +625,20 @@ async def buy_stock(mobile_number: str, stock_symbol: str, company_name: str, qu
 
 
 @app.post("/sell_stock")
-async def sell_stock(mobile_number: str, stock_symbol: str, company_name: str, quantity: int, price_per_share: float):
+async def sell_stock(request: SellStockRequest):
     """
     Sell stocks and update the portfolio and transactions.
     """
     try:
+        
+
+        # Extract data from the request object
+        mobile_number = request.mobile_number
+        stock_symbol = request.stock_symbol
+        company_name = request.company_name
+        quantity = request.quantity
+        price_per_share = request.price_per_share
+
         # Define the user's portfolio and transaction table names
         portfolio_table = f"portfolio_{mobile_number}"
         transaction_table = f"transactions_{mobile_number}"
