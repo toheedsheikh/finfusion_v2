@@ -2,6 +2,13 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from supabase import create_client
+import requests
+import httpx
+import asyncio
+
+# API configuration
+API_KEY = "RESN4GR5UASD6EVG"  # Replace with your Alpha Vantage API key
+BASE_URL = "https://www.alphavantage.co/query"
 
 # Supabase setup (replace these with your actual Supabase URL and API key)
 SUPABASE_URL = "https://rxgrgrygmsuggjeqrjsf.supabase.co"
@@ -11,9 +18,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 app = FastAPI()
 
 # Pydantic models
-
-# Request model for transaction history
-class TransactionHistoryRequest(BaseModel):
+class PortfolioRequest(BaseModel):
     mobile_number: str
 
 class CostBreakdown(BaseModel):
@@ -61,6 +66,115 @@ class TransferRequest(BaseModel):
     amount: float
     category: Optional[str] = None
 
+# Request model for transaction history
+class TransactionHistoryRequest(BaseModel):
+    mobile_number: str
+
+# Helper function to calculate averages
+def calculate_averages(data: dict):
+    """
+    Calculate the average of open, high, low, and close prices for each date.
+    """
+    averages = []
+    for date, values in data.items():
+        try:
+            avg = (float(values["1. open"]) + float(values["2. high"]) +
+                   float(values["3. low"]) + float(values["4. close"])) / 4
+            averages.append({"date": date, "average": avg})
+        except KeyError:
+            continue  # Skip if data is incomplete
+    # Sort data by date in ascending order
+    return sorted(averages, key=lambda x: x["date"])
+
+# Function to fetch data and calculate averages
+def fetch_and_calculate(function: str, symbol: str, additional_params: dict = {}):
+    """
+    Fetch time series data from Alpha Vantage and calculate averages.
+    """
+    params = {
+        "function": function,
+        "symbol": symbol,
+        "apikey": API_KEY,
+    }
+    params.update(additional_params)
+
+    response = requests.get(BASE_URL, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        if "Error Message" in data or "Note" in data:
+            raise HTTPException(status_code=400, detail="Invalid API call or rate limit exceeded.")
+        
+        # Extract relevant time series data
+        key = [k for k in data.keys() if "Time Series" in k]
+        if key:
+            time_series = data[key[0]]
+            return calculate_averages(time_series)
+        else:
+            raise HTTPException(status_code=400, detail="Unexpected API response format.")
+    else:
+        raise HTTPException(status_code=response.status_code, detail="Failed to fetch data.")
+
+@app.post("/portfolio")
+async def get_user_portfolio(request: PortfolioRequest):
+    """
+    Retrieve the portfolio details of a user, including all data points for daily, weekly, and monthly graphs.
+    """
+    try:
+        portfolio_table = f"portfolio_{request.mobile_number}"
+
+        # Fetch the portfolio data
+        portfolio_response = supabase.table(portfolio_table).select("*").execute()
+        if not portfolio_response.data:
+            return {"message": "Portfolio is empty", "portfolio": []}
+
+        portfolio_data = []
+        for stock in portfolio_response.data:
+            symbol = stock["stock_symbol"]
+
+            try:
+                # Fetch all time series data and calculate averages
+                daily_data = fetch_and_calculate(
+                    function="TIME_SERIES_DAILY",
+                    symbol=symbol
+                )
+                weekly_data = fetch_and_calculate(
+                    function="TIME_SERIES_WEEKLY",
+                    symbol=symbol
+                )
+                monthly_data = fetch_and_calculate(
+                    function="TIME_SERIES_MONTHLY",
+                    symbol=symbol
+                )
+            except HTTPException:
+                # Handle API call errors gracefully
+                daily_data = weekly_data = monthly_data = []
+
+            # Safely access "profit_loss" and other numeric fields
+            profit_loss = stock.get("profit_loss")
+            profit_loss = profit_loss if profit_loss is not None else 0  # Default to 0 if None
+
+            portfolio_data.append({
+                "Symbol": stock["stock_symbol"],
+                "Name": stock["company_name"],
+                "Total Price": stock["total_investment"] or 0,  # Default to 0 if None
+                "Price Per Share": stock["purchase_price"] or 0,  # Default to 0 if None
+                "Number of Shares": stock["quantity"] or 0,  # Default to 0 if None
+                "Market Sentiment": "Positive" if profit_loss >= 0 else "Negative",
+                "Text Info": f"{stock['stock_symbol']} is a leading company in its sector.",
+                "Last Refreshed": "2025-01-24T10:00:00Z",
+                "Time Zone": "EST",
+                "ShowMore": {
+                    "Graph": {
+                        "Daily": [{"Time": avg["date"], "Price": avg["average"]} for avg in daily_data],
+                        "Weekly": [{"Time": avg["date"], "Price": avg["average"]} for avg in weekly_data],
+                        "Monthly": [{"Time": avg["date"], "Price": avg["average"]} for avg in monthly_data],
+                    },
+                },
+            })
+
+        return {"message": "Portfolio retrieved successfully", "portfolio": portfolio_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 async def update_user_portfolio_summary(mobile_number: str):
     # Calculate total investment
@@ -78,6 +192,36 @@ async def update_user_portfolio_summary(mobile_number: str):
         "current_portfolio_value": current_value_sum,
         "profit_loss": profit_loss
     }).eq("mobile_number", mobile_number).execute()
+
+@app.post("/transaction-history")
+async def get_transaction_history(request: TransactionHistoryRequest):
+    """
+    Retrieve the transaction history for a user based on their mobile number.
+    """
+    try:
+        # Define the transaction table name dynamically
+        transaction_table = f"transactions_{request.mobile_number}"
+
+        # Fetch all transactions for the user
+        transaction_response = supabase.table(transaction_table).select("*").execute()
+        if not transaction_response.data:
+            return {"message": "No transactions found", "transactions": []}
+
+        # Process and return the data
+        transactions = [
+            {
+                "transaction_id": txn.get("transaction_id", "N/A"),  # Updated field name
+                "date": txn.get("transaction_date", "N/A"),
+                "amount": txn.get("amount", 0.0),
+                "category": txn.get("category", "Unknown"),
+                "description": txn.get("description", "N/A"),  # Optional field
+                "type": txn.get("type", "Unknown"),  # e.g., debit or credit
+            }
+            for txn in transaction_response.data
+        ]
+        return {"message": "Transaction history retrieved successfully", "transactions": transactions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/financial-summary")
 def get_financial_summary(request: FinancialSummaryRequest):
@@ -311,85 +455,6 @@ async def transfer_funds(request: TransferRequest):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-@app.post("/portfolio")
-async def get_user_portfolio(request: PortfolioRequest):
-    """
-    Retrieve the portfolio details of a user in the specified format.
-    """
-    try:
-        # Define the portfolio table name dynamically
-        portfolio_table = f"portfolio_{request.mobile_number}"
-
-        # Fetch the portfolio data
-        portfolio_response = supabase.table(portfolio_table).select("*").execute()
-        if not portfolio_response.data:
-            return {"message": "Portfolio is empty", "portfolio": []}
-
-        # Transform data into the required format
-        portfolio_data = []
-        for stock in portfolio_response.data:
-            portfolio_data.append({
-                "Symbol": stock["stock_symbol"],
-                "Name": stock["company_name"],
-                "Total Price": stock["total_investment"],  # Total investment
-                "Price Per Share": stock["purchase_price"],  # Purchase price per share
-                "Number of Shares": stock["quantity"],  # Quantity of shares
-                "Market Sentiment": "Positive" if stock["profit_loss"] >= 0 else "Negative",  # Dummy logic
-                "Text Info": f"{stock['stock_symbol']} is a leading company in its sector.",  # Dummy description
-                "Last Refreshed": "2025-01-24T10:00:00Z",  # Dummy timestamp
-                "Time Zone": "EST",  # Dummy time zone
-                "ShowMore": {
-                    "Graph": {
-                        "Daily": [
-                            {"Time": "2025-01-23T10:00:00Z", "Price": stock["current_price"] - 2},
-                            {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
-                        ],
-                        "Weekly": [
-                            {"Time": "2025-01-17T10:00:00Z", "Price": stock["current_price"] - 5},
-                            {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
-                        ],
-                        "Monthly": [
-                            {"Time": "2024-12-24T10:00:00Z", "Price": stock["current_price"] - 10},
-                            {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
-                        ],
-                    },
-                },
-            })
-
-        return {"message": "Portfolio retrieved successfully", "portfolio": portfolio_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
-@app.post("/transaction-history")
-async def get_transaction_history(request: TransactionHistoryRequest):
-    """
-    Retrieve the transaction history for a user based on their mobile number.
-    """
-    try:
-        # Define the transaction table name dynamically
-        transaction_table = f"transactions_{request.mobile_number}"
-
-        # Fetch all transactions for the user
-        transaction_response = supabase.table(transaction_table).select("*").execute()
-        if not transaction_response.data:
-            return {"message": "No transactions found", "transactions": []}
-
-        # Process and return the data
-        transactions = [
-            {
-                "transaction_id": txn.get("transaction_id", "N/A"),  # Updated field name
-                "date": txn.get("transaction_date", "N/A"),
-                "amount": txn.get("amount", 0.0),
-                "category": txn.get("category", "Unknown"),
-                "description": txn.get("description", "N/A"),  # Optional field
-                "type": txn.get("type", "Unknown"),  # e.g., debit or credit
-            }
-            for txn in transaction_response.data
-        ]
-        return {"message": "Transaction history retrieved successfully", "transactions": transactions}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/portfolio")
 async def get_user_portfolio(request: PortfolioRequest):
@@ -439,7 +504,7 @@ async def get_user_portfolio(request: PortfolioRequest):
         return {"message": "Portfolio retrieved successfully", "portfolio": portfolio_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+    
 @app.get("/explore")
 async def explore_companies():
     """
