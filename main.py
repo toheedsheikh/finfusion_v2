@@ -10,6 +10,23 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI()
 
+class CostBreakdown(BaseModel):
+    category: str
+    amount: int
+
+class NetWorthValue(BaseModel):
+    asset: str
+    value: int
+
+class PortfolioBreakdown(BaseModel):
+    share: str
+    value: int
+
+class PerformanceMetrics(BaseModel):
+    stock: str
+    investment_price: float
+    current_price: float
+
 # Pydantic models
 class PortfolioRequest(BaseModel):
     mobile_number: str
@@ -35,6 +52,38 @@ class TransferRequest(BaseModel):
     receiver_mobile_number: str
     amount: float
     category: Optional[str] = None
+
+@app.get("/financial-summary")
+def get_financial_summary():
+    data = {
+        "breakdown_of_cost": [
+            {"category": "Entertainment", "amount": 1500},
+            {"category": "Rent", "amount": 8000},
+            {"category": "Groceries", "amount": 3000},
+            {"category": "Utilities", "amount": 2500},
+            {"category": "Transportation", "amount": 2000},
+            {"category": "Others", "amount": 1000}
+        ],
+        "net_worth_value": [
+            {"asset": "Bank Balance", "value": 50000},
+            {"asset": "Shares", "value": 20000}
+        ],
+        "portfolio_breakdown": [
+            {"share": "Apple", "value": 5000},
+            {"share": "Tesla", "value": 3000},
+            {"share": "Amazon", "value": 8000},
+            {"share": "Microsoft", "value": 6000},
+            {"share": "Google", "value": 4000}
+        ],
+        "performance_metrics": [
+            {"stock": "Apple", "investment_price": 150, "current_price": 180},
+            {"stock": "Tesla", "investment_price": 200, "current_price": 220},
+            {"stock": "Amazon", "investment_price": 120, "current_price": 100},
+            {"stock": "Microsoft", "investment_price": 250, "current_price": 300},
+            {"stock": "Google", "investment_price": 180, "current_price": 170}
+        ]
+    }
+    return data
 
 
 @app.post("/signup")
