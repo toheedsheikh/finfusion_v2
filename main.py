@@ -32,6 +32,9 @@ class PerformanceMetrics(BaseModel):
 class FinancialSummaryRequest(BaseModel):
     mobile_number: str
 
+class PortfolioRequest(BaseModel):
+    mobile_number: str
+
 class SignUpRequest(BaseModel):
     mobile_number: str
     name: str
