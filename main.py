@@ -476,10 +476,9 @@ async def transfer_funds(request: TransferRequest):
 @app.post("/portfolio")
 async def get_user_portfolio(request: PortfolioRequest):
     """
-    Retrieve the portfolio details of a user in the specified format.
+    Retrieve the portfolio details of a user, including all data points for daily, weekly, and monthly graphs.
     """
     try:
-        # Define the portfolio table name dynamically
         portfolio_table = f"portfolio_{request.mobile_number}"
 
         # Fetch the portfolio data
@@ -487,33 +486,47 @@ async def get_user_portfolio(request: PortfolioRequest):
         if not portfolio_response.data:
             return {"message": "Portfolio is empty", "portfolio": []}
 
-        # Transform data into the required format
         portfolio_data = []
         for stock in portfolio_response.data:
+            symbol = stock["stock_symbol"]
+
+            try:
+                # Fetch all time series data and calculate averages
+                daily_data = fetch_and_calculate(
+                    function="TIME_SERIES_DAILY",
+                    symbol=symbol
+                )
+                weekly_data = fetch_and_calculate(
+                    function="TIME_SERIES_WEEKLY",
+                    symbol=symbol
+                )
+                monthly_data = fetch_and_calculate(
+                    function="TIME_SERIES_MONTHLY",
+                    symbol=symbol
+                )
+            except HTTPException:
+                # Handle API call errors gracefully
+                daily_data = weekly_data = monthly_data = []
+
+            # Safely access "profit_loss" and other numeric fields
+            profit_loss = stock.get("profit_loss")
+            profit_loss = profit_loss if profit_loss is not None else 0  # Default to 0 if None
+
             portfolio_data.append({
                 "Symbol": stock["stock_symbol"],
                 "Name": stock["company_name"],
-                "Total Price": stock["total_investment"],  # Total investment
-                "Price Per Share": stock["purchase_price"],  # Purchase price per share
-                "Number of Shares": stock["quantity"],  # Quantity of shares
-                "Market Sentiment": "Positive" if stock["profit_loss"] >= 0 else "Negative",  # Dummy logic
-                "Text Info": f"{stock['stock_symbol']} is a leading company in its sector.",  # Dummy description
-                "Last Refreshed": "2025-01-24T10:00:00Z",  # Dummy timestamp
-                "Time Zone": "EST",  # Dummy time zone
+                "Total Price": stock["total_investment"] or 0,  # Default to 0 if None
+                "Price Per Share": stock["purchase_price"] or 0,  # Default to 0 if None
+                "Number of Shares": stock["quantity"] or 0,  # Default to 0 if None
+                "Market Sentiment": "Positive" if profit_loss >= 0 else "Negative",
+                "Text Info": f"{stock['stock_symbol']} is a leading company in its sector.",
+                "Last Refreshed": "2025-01-24T10:00:00Z",
+                "Time Zone": "EST",
                 "ShowMore": {
                     "Graph": {
-                        "Daily": [
-                            {"Time": "2025-01-23T10:00:00Z", "Price": stock["current_price"] - 2},
-                            {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
-                        ],
-                        "Weekly": [
-                            {"Time": "2025-01-17T10:00:00Z", "Price": stock["current_price"] - 5},
-                            {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
-                        ],
-                        "Monthly": [
-                            {"Time": "2024-12-24T10:00:00Z", "Price": stock["current_price"] - 10},
-                            {"Time": "2025-01-24T10:00:00Z", "Price": stock["current_price"]}
-                        ],
+                        "Daily": [{"Time": avg["date"], "Price": avg["average"]} for avg in daily_data],
+                        "Weekly": [{"Time": avg["date"], "Price": avg["average"]} for avg in weekly_data],
+                        "Monthly": [{"Time": avg["date"], "Price": avg["average"]} for avg in monthly_data],
                     },
                 },
             })
