@@ -4,11 +4,13 @@ from typing import Optional
 from supabase import create_client
 
 # Supabase setup (replace these with your actual Supabase URL and API key)
-SUPABASE_URL = "https://mahgkvaccgsbveyucycz.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1haGdrdmFjY2dzYnZleXVjeWN6Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczNzU2OTQzNSwiZXhwIjoyMDUzMTQ1NDM1fQ.chONRqky51Wo-Skt0VUArI08l6eKLx_AbKkorKmFd2E"
+SUPABASE_URL = "https://rxgrgrygmsuggjeqrjsf.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ4Z3JncnlnbXN1Z2dqZXFyanNmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc3OTUxMDUsImV4cCI6MjA1MzM3MTEwNX0.IWsPuZo_rsncdDZxHePt7rsvNg-0XWMKiPMFnsLwahg"
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI()
+
+# Pydantic models
 
 class CostBreakdown(BaseModel):
     category: str
@@ -27,7 +29,6 @@ class PerformanceMetrics(BaseModel):
     investment_price: float
     current_price: float
 
-# Pydantic models
 class PortfolioRequest(BaseModel):
     mobile_number: str
 
@@ -52,6 +53,24 @@ class TransferRequest(BaseModel):
     receiver_mobile_number: str
     amount: float
     category: Optional[str] = None
+
+
+async def update_user_portfolio_summary(mobile_number: str):
+    # Calculate total investment
+    total_investment = supabase.table(f"portfolio_{mobile_number}").select("total_investment").execute()
+    total_investment_sum = sum(item["total_investment"] for item in total_investment.data)
+
+    # Calculate current portfolio value
+    current_value = supabase.table(f"portfolio_{mobile_number}").select("current_value").execute()
+    current_value_sum = sum(item["current_value"] for item in current_value.data)
+
+    # Update the users table
+    profit_loss = current_value_sum - total_investment_sum
+    supabase.table("users").update({
+        "total_amount_invested": total_investment_sum,
+        "current_portfolio_value": current_value_sum,
+        "profit_loss": profit_loss
+    }).eq("mobile_number", mobile_number).execute()
 
 @app.get("/financial-summary")
 def get_financial_summary():
@@ -84,6 +103,7 @@ def get_financial_summary():
         ]
     }
     return data
+
 
 
 @app.post("/signup")
@@ -120,6 +140,8 @@ async def sign_up_user(request: SignUpRequest):
 
         # Dynamically create a portfolio table for this user
         supabase.rpc("create_portfolio_table", {"table_name": portfolio_table_name}).execute()
+        # supabase.rpc("attach_trigger_to_portfolio", {"table_name": portfolio_table_name}).execute()
+
 
         return {"message": "User created successfully", "user": new_user}
 
@@ -328,20 +350,140 @@ async def explore_companies():
         explore_data = response.data
         categorized_data = {}
         for company in explore_data:
-            category = company["Category"]
+            category = company["category"]
             if category not in categorized_data:
                 categorized_data[category] = []
             categorized_data[category].append({
-                "company_name": company["Company Name"],
-                "ticker_symbol": company["Ticker Symbol"],
-                "price_note": company["Price"],
-                "information": company["Info"]
+                "company_name": company["company_name"],
+                "ticker_symbol": company["stock_symbol"],
+                "price_note": company["price"],
+                "information": company["info"]
             })
 
         return {"keys":["Technology","Entertainment","Hardware","Healthcare","Finance","Energy"],"message": "Data retrieved successfully", "categories": categorized_data}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving explore data: {str(e)}")
+    
+@app.post("/buy_stock")
+async def buy_stock(mobile_number: str, stock_symbol: str, company_name: str, quantity: int, price_per_share: float):
+    """
+    Buy stocks and update the portfolio and transactions.
+    """
+    try:
+        # Define the user's portfolio and transaction table names
+        portfolio_table = f"portfolio_{mobile_number}"
+        transaction_table = f"transactions_{mobile_number}"
+
+        # Fetch the user to check wallet balance
+        user_response = supabase.table("users").select("*").eq("mobile_number", mobile_number).execute()
+        if not user_response.data:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user = user_response.data[0]
+        total_cost = quantity * price_per_share
+
+        # Check if the user has enough balance
+        if user["wallet_amount"] < total_cost:
+            raise HTTPException(status_code=400, detail="Insufficient wallet balance")
+
+        # Deduct the cost from the user's wallet
+        updated_wallet_balance = user["wallet_amount"] - total_cost
+        supabase.table("users").update({"wallet_amount": updated_wallet_balance}).eq("mobile_number", mobile_number).execute()
+
+        # Check if the stock already exists in the user's portfolio
+        portfolio_response = supabase.table(portfolio_table).select("*").eq("stock_symbol", stock_symbol).execute()
+        if portfolio_response.data:
+            # Update the stock entry in the portfolio
+            existing_stock = portfolio_response.data[0]
+            new_quantity = existing_stock["quantity"] + quantity
+            new_total_investment = existing_stock["purchase_price"] * new_quantity
+            supabase.table(portfolio_table).update({
+                "quantity": new_quantity,
+                "purchase_price": (existing_stock["purchase_price"] * existing_stock["quantity"] + total_cost) / new_quantity
+            }).eq("stock_symbol", stock_symbol).execute()
+        else:
+            # Add a new stock entry to the portfolio
+            supabase.table(portfolio_table).insert({
+                "stock_symbol": stock_symbol,
+                "company_name": company_name,
+                "quantity": quantity,
+                "purchase_price": price_per_share,
+                "current_price": price_per_share,
+            }).execute()
+
+        # Record the transaction in the user's transaction table
+        supabase.table(transaction_table).insert({
+            "amount": total_cost,
+            "transaction_with": company_name,
+            "transaction_type": "buy",
+            "category": "investment"
+        }).execute()
+        await update_user_portfolio_summary(mobile_number)
+
+
+        return {"message": "Stock purchased successfully", "new_wallet_balance": updated_wallet_balance}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/sell_stock")
+async def sell_stock(mobile_number: str, stock_symbol: str, company_name: str, quantity: int, price_per_share: float):
+    """
+    Sell stocks and update the portfolio and transactions.
+    """
+    try:
+        # Define the user's portfolio and transaction table names
+        portfolio_table = f"portfolio_{mobile_number}"
+        transaction_table = f"transactions_{mobile_number}"
+
+        # Fetch the stock from the user's portfolio
+        portfolio_response = supabase.table(portfolio_table).select("*").eq("stock_symbol", stock_symbol).execute()
+        if not portfolio_response.data:
+            raise HTTPException(status_code=404, detail="Stock not found in portfolio")
+
+        stock = portfolio_response.data[0]
+        if stock["quantity"] < quantity:
+            raise HTTPException(status_code=400, detail="Insufficient stock quantity")
+
+        # Calculate the total sale amount
+        total_sale = quantity * price_per_share
+
+        # Update the portfolio
+        if stock["quantity"] == quantity:
+            # If selling all stocks, delete the entry
+            supabase.table(portfolio_table).delete().eq("stock_symbol", stock_symbol).execute()
+        else:
+            # Update the stock entry in the portfolio
+            new_quantity = stock["quantity"] - quantity
+            new_profit_loss = (stock["current_price"] - stock["purchase_price"]) * new_quantity  # Update profit_loss for remaining quantity
+            supabase.table(portfolio_table).update({
+                "quantity": new_quantity,
+                # "profit_loss": new_profit_loss
+            }).eq("stock_symbol", stock_symbol).execute()
+
+        # Add the sale amount to the user's wallet
+        user_response = supabase.table("users").select("*").eq("mobile_number", mobile_number).execute()
+        user = user_response.data[0]
+        updated_wallet_balance = user["wallet_amount"] + total_sale
+        supabase.table("users").update({"wallet_amount": updated_wallet_balance}).eq("mobile_number", mobile_number).execute()
+
+        # Record the transaction in the user's transaction table
+        supabase.table(transaction_table).insert({
+            "amount": total_sale,
+            "transaction_with": company_name,
+            "transaction_type": "sell",
+            "category": "investment"
+        }).execute()
+        await update_user_portfolio_summary(mobile_number)
+
+
+        return {"message": "Stock sold successfully", "new_wallet_balance": updated_wallet_balance}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/")
 async def root():
