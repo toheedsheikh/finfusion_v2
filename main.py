@@ -89,6 +89,9 @@ class BuyStockRequest(BaseModel):
     quantity: int
     price_per_share: float
 
+class WalletRequest(BaseModel):
+    mobile_number: str
+
 # Helper function to calculate averages
 def calculate_averages(data: dict):
     """
@@ -194,6 +197,26 @@ def fetch_and_calculate(function: str, symbol: str, additional_params: dict = {}
 #         return {"message": "Portfolio retrieved successfully", "portfolio": portfolio_data}
 #     except Exception as e:
 #         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/get_wallet_amount")
+async def get_wallet_amount(request: WalletRequest):
+    """
+    Retrieve the wallet amount for a user based on their mobile number.
+    """
+    try:
+        # Fetch the user by mobile number
+        user_response = supabase.table("users").select("wallet_amount").eq("mobile_number", request.mobile_number).execute()
+
+        # Check if user exists
+        if not user_response.data:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Extract wallet amount from response
+        wallet_amount = user_response.data[0]["wallet_amount"]
+
+        return {"mobile_number": request.mobile_number, "wallet_amount": wallet_amount}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 async def update_user_portfolio_summary(mobile_number: str):
     # Calculate total investment
